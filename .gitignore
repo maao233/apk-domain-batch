@@ -1,0 +1,10 @@
+out/
+*.har
+*.bak
+urls_current.txt
+dump_urls.py
+extract_hosts_once.py
+# Magisk: GPL / unofficial redistribution — never commit
+assets/Magisk.apk
+# local smoke outputs
+out/smoke_*/

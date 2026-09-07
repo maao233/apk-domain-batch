@@ -1,0 +1,4 @@
+﻿com.capturecli debug APK for per-UID transparent redirect to host mitmproxy.
+
+Bundled native helper: gost (go-gost) — see https://github.com/go-gost/gost
+Install only via scripts (copy to %TEMP% first if path has non-ASCII).

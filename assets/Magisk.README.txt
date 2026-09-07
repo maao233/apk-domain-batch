@@ -1,0 +1,10 @@
+﻿# Magisk APK is NOT shipped in this repository (GPL / redistribution policy).
+#
+# 1. Download Magisk yourself:
+#    - Official: https://github.com/topjohnwu/Magisk/releases  (app-release.apk)
+#    - Kitsune (unofficial): only from the maintainer's official channel
+# 2. Save as:  assets/Magisk.apk   (same folder as CaptureCli.apk)
+# 3. Do not git add this file.
+#
+# Lab note: a previously used Kitsune build was package io.github.huskydg.magisk
+# (versionName like R6687BB53-kitsune). Prefer official Magisk when possible.
