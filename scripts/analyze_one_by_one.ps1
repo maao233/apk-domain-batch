@@ -33,13 +33,13 @@ $TmpApk = $E.TmpApk
 $Noise = @('google','googleapis','gstatic','firebase','crashlytics','facebook','bugly','umeng','appjiagu','360.cn','sayhi.360','qihoo','sentry','baidu.com','amap.com','jpush','igexin','getui','cloudflare','adobe.com','mozilla.org','yahoo.com','bing.com','microsoft.com','publicsuffix.org','fragment.com','purl.org','iec.ch','gnu.org','comodo.net','doh.pub','w3.org')
 
 function Invoke-Adb {
-  param([Parameter(Mandatory)][string[]]$Args)
-  & $AdbExe -s $Serial @Args
+  param([Parameter(Mandatory)][string[]]$CmdArgs)
+  & $AdbExe -s $Serial @CmdArgs
 }
 
 function Ensure-Device {
-  Invoke-Adb -Args @("connect", $Serial) 2>$null | Out-Null
-  $st = (Invoke-Adb -Args @("get-state") 2>$null | Out-String).Trim()
+  Invoke-Adb -CmdArgs @("connect", $Serial) 2>$null | Out-Null
+  $st = (Invoke-Adb -CmdArgs @("get-state") 2>$null | Out-String).Trim()
   if ($st -eq "device") { return $true }
   if (-not $Ld) {
     Write-Host "ldconsole not found; cannot auto-start emulator"
@@ -49,9 +49,9 @@ function Ensure-Device {
   & $Ld launch --index $LdIndex | Out-Null
   for ($i = 0; $i -lt 45; $i++) {
     Start-Sleep 3
-    Invoke-Adb -Args @("connect", $Serial) 2>$null | Out-Null
-    $st = (Invoke-Adb -Args @("get-state") 2>$null | Out-String).Trim()
-    $boot = (Invoke-Adb -Args @("shell", "getprop", "sys.boot_completed") 2>$null | Out-String).Trim()
+    Invoke-Adb -CmdArgs @("connect", $Serial) 2>$null | Out-Null
+    $st = (Invoke-Adb -CmdArgs @("get-state") 2>$null | Out-String).Trim()
+    $boot = (Invoke-Adb -CmdArgs @("shell", "getprop", "sys.boot_completed") 2>$null | Out-String).Trim()
     Write-Host "  wait[$i] state=$st boot=$boot"
     if ($st -eq "device" -and $boot -eq "1") { return $true }
   }
@@ -60,9 +60,16 @@ function Ensure-Device {
 
 function Get-PackageName([string]$apk) {
   if (-not $Aapt) { throw "aapt.exe not found (Android build-tools or LDPlayer aapt)" }
-  $line = & $Aapt dump badging $apk 2>$null | Where-Object { $_ -match "^package:" } | Select-Object -First 1
-  if ($line -match "name='([^']+)'") { return $Matches[1] }
-  return $null
+  # aapt often fails on non-ASCII paths — always dump via ASCII temp copy
+  $probe = Join-Path $env:TEMP ("skill_aapt_probe_" + [guid]::NewGuid().ToString("N") + ".apk")
+  try {
+    Copy-Item -LiteralPath $apk -Destination $probe -Force
+    $line = & $Aapt dump badging $probe 2>$null | Where-Object { $_ -match "^package:" } | Select-Object -First 1
+    if ($line -match "name='([^']+)'") { return $Matches[1] }
+    return $null
+  } finally {
+    Remove-Item -LiteralPath $probe -Force -ErrorAction SilentlyContinue
+  }
 }
 
 function Ensure-Mitm {
@@ -152,8 +159,8 @@ for h, n in c.most_common(15):
 
 function Uninstall-Quiet([string]$pkg) {
   if (-not $pkg) { return }
-  Invoke-Adb -Args @("shell", "am", "force-stop", $pkg) 2>$null | Out-Null
-  Invoke-Adb -Args @("uninstall", $pkg) 2>$null | Out-Host
+  Invoke-Adb -CmdArgs @("shell", "am", "force-stop", $pkg) 2>$null | Out-Null
+  Invoke-Adb -CmdArgs @("uninstall", $pkg) 2>$null | Out-Host
 }
 
 function Get-BoundsCenter([string]$Bounds) {
@@ -172,9 +179,9 @@ function Get-BoundsCenter([string]$Bounds) {
 
 function Dump-UiXml([string]$LocalPath) {
   $remote = "/sdcard/_capturecli_ui.xml"
-  Invoke-Adb -Args @("shell", "rm", "-f", $remote) 2>$null | Out-Null
-  Invoke-Adb -Args @("shell", "uiautomator", "dump", $remote) 2>$null | Out-Null
-  Invoke-Adb -Args @("pull", $remote, $LocalPath) 2>$null | Out-Null
+  Invoke-Adb -CmdArgs @("shell", "rm", "-f", $remote) 2>$null | Out-Null
+  Invoke-Adb -CmdArgs @("shell", "uiautomator", "dump", $remote) 2>$null | Out-Null
+  Invoke-Adb -CmdArgs @("pull", $remote, $LocalPath) 2>$null | Out-Null
   if (-not (Test-Path $LocalPath)) { return $null }
   return (Get-Content -Raw -Encoding UTF8 $LocalPath)
 }
@@ -244,18 +251,18 @@ function Invoke-LoginUiInteract([string]$DumpName) {
   $xml = Dump-UiXml $local
   if (-not $xml) {
     Write-Host "ui dump failed -> blind taps"
-    Invoke-Adb -Args @("shell", "input", "tap", "540", "1500") 2>$null | Out-Null
+    Invoke-Adb -CmdArgs @("shell", "input", "tap", "540", "1500") 2>$null | Out-Null
     Start-Sleep 2
-    Invoke-Adb -Args @("shell", "input", "tap", "540", "1100") 2>$null | Out-Null
+    Invoke-Adb -CmdArgs @("shell", "input", "tap", "540", "1100") 2>$null | Out-Null
     return 'blind'
   }
 
   $hits = Find-LoginClickTargets $xml
   if ($hits.Count -eq 0) {
     Write-Host "no login-related clickable -> blind taps x2"
-    Invoke-Adb -Args @("shell", "input", "tap", "540", "1500") 2>$null | Out-Null
+    Invoke-Adb -CmdArgs @("shell", "input", "tap", "540", "1500") 2>$null | Out-Null
     Start-Sleep 2
-    Invoke-Adb -Args @("shell", "input", "tap", "540", "1100") 2>$null | Out-Null
+    Invoke-Adb -CmdArgs @("shell", "input", "tap", "540", "1100") 2>$null | Out-Null
     return 'blind'
   }
 
@@ -267,7 +274,7 @@ function Invoke-LoginUiInteract([string]$DumpName) {
     if ($used.ContainsKey($key)) { continue }
     $used[$key] = $true
     Write-Host ("ui tap[{0}] ({1},{2}) score={3} {4}" -f $n, $h.X, $h.Y, $h.Score, $h.Label)
-    Invoke-Adb -Args @("shell", "input", "tap", "$($h.X)", "$($h.Y)") 2>$null | Out-Null
+    Invoke-Adb -CmdArgs @("shell", "input", "tap", "$($h.X)", "$($h.Y)") 2>$null | Out-Null
     Start-Sleep 2
     $n++
     if ($n -ge 2) { break }
@@ -278,8 +285,8 @@ function Invoke-LoginUiInteract([string]$DumpName) {
 # ---- main ----
 if (-not (Ensure-Device)) { throw "emulator not ready" }
 Ensure-Mitm
-Invoke-Adb -Args @("reverse", "--remove-all") 2>$null | Out-Null
-Invoke-Adb -Args @("reverse", "tcp:8080", "tcp:8080") | Out-Null
+Invoke-Adb -CmdArgs @("reverse", "--remove-all") 2>$null | Out-Null
+Invoke-Adb -CmdArgs @("reverse", "tcp:8080", "tcp:8080") | Out-Null
 
 # inject CA once (skill-bundled capture.ps1)
 $ca = Join-Path $PSScriptRoot "capture.ps1"
@@ -315,12 +322,12 @@ for ($idx = $StartIndex; $idx -le $end; $idx++) {
   Write-Host "package=$pkg"
 
   # ensure clean: stop capture, uninstall any previous target
-  Invoke-Adb -Args @("shell", "am", "broadcast", "-a", "com.capturecli.STOP", "-n", "com.capturecli/.CliReceiver") 2>$null | Out-Null
+  Invoke-Adb -CmdArgs @("shell", "am", "broadcast", "-a", "com.capturecli.STOP", "-n", "com.capturecli/.CliReceiver") 2>$null | Out-Null
   Uninstall-Quiet $pkg
 
   # Always install from TEMP ASCII path (avoid non-ASCII adb install failures)
   Copy-Item $apk $TmpApk -Force
-  $inst = (Invoke-Adb -Args @("install", "-r", "-g", $TmpApk) 2>&1 | Out-String)
+  $inst = (Invoke-Adb -CmdArgs @("install", "-r", "-g", $TmpApk) 2>&1 | Out-String)
   if ($inst -notmatch "Success") {
     Write-Host "install fail: $inst"
     Add-Content $ReportCsv "`"$name`",$pkg,,,install_fail"
@@ -329,29 +336,29 @@ for ($idx = $StartIndex; $idx -le $end; $idx++) {
   Write-Host "installed OK"
 
   Set-Content $UrlsFile "" -Encoding UTF8
-  Invoke-Adb -Args @("reverse", "tcp:8080", "tcp:8080") 2>$null | Out-Null
-  $bc = (Invoke-Adb -Args @("shell", "am", "broadcast", "-a", "com.capturecli.START", "-n", "com.capturecli/.CliReceiver", "--es", "package", $pkg, "--es", "proxy", "127.0.0.1:8080") 2>&1 | Out-String)
+  Invoke-Adb -CmdArgs @("reverse", "tcp:8080", "tcp:8080") 2>$null | Out-Null
+  $bc = (Invoke-Adb -CmdArgs @("shell", "am", "broadcast", "-a", "com.capturecli.START", "-n", "com.capturecli/.CliReceiver", "--es", "package", $pkg, "--es", "proxy", "127.0.0.1:8080") 2>&1 | Out-String)
   Write-Host $bc.Trim()
 
   # Poll status until root-redirect / global-proxy (START now runs in receiver goAsync)
   $status = ""
   for ($w = 0; $w -lt 20; $w++) {
     Start-Sleep 1
-    $status = (Invoke-Adb -Args @("shell", "su", "0", "cat", "/sdcard/capturecli-status.txt") 2>$null | Out-String).Trim()
+    $status = (Invoke-Adb -CmdArgs @("shell", "su", "0", "cat", "/sdcard/capturecli-status.txt") 2>$null | Out-String).Trim()
     if ($status -match 'mode=(root-redirect|global-proxy)') { break }
     if ($status -match '^error=') { break }
   }
   Write-Host "capture status: $status"
   if ($status -notmatch 'mode=(root-redirect|global-proxy)') {
     Write-Host "WARN: capture not ready — retry START once"
-    Invoke-Adb -Args @("shell", "am", "broadcast", "-a", "com.capturecli.START", "-n", "com.capturecli/.CliReceiver", "--es", "package", $pkg, "--es", "proxy", "127.0.0.1:8080") 2>$null | Out-Null
+    Invoke-Adb -CmdArgs @("shell", "am", "broadcast", "-a", "com.capturecli.START", "-n", "com.capturecli/.CliReceiver", "--es", "package", $pkg, "--es", "proxy", "127.0.0.1:8080") 2>$null | Out-Null
     Start-Sleep 5
-    $status = (Invoke-Adb -Args @("shell", "su", "0", "cat", "/sdcard/capturecli-status.txt") 2>$null | Out-String).Trim()
+    $status = (Invoke-Adb -CmdArgs @("shell", "su", "0", "cat", "/sdcard/capturecli-status.txt") 2>$null | Out-String).Trim()
     Write-Host "capture status(retry): $status"
   }
 
   # launch ONLY this package -> wait for startup -> dump UI -> login tap or blind
-  Invoke-Adb -Args @("shell", "monkey", "-p", $pkg, "-c", "android.intent.category.LAUNCHER", "1") 2>$null | Out-Null
+  Invoke-Adb -CmdArgs @("shell", "monkey", "-p", $pkg, "-c", "android.intent.category.LAUNCHER", "1") 2>$null | Out-Null
   Write-Host "waiting ${DumpWaitSec}s for app startup before uiautomator dump..."
   Start-Sleep $DumpWaitSec
   $safeDump = ($name -replace '[^\w\.-]', '_')
@@ -375,7 +382,7 @@ for ($idx = $StartIndex; $idx -le $end; $idx++) {
   Add-Content $ReportCsv ('"{0}",{1},{2},"{3}",{4}' -f $name, $pkg, $pick.Main, $pick.All, $source)
 
   # stop capture then DELETE this app before next
-  Invoke-Adb -Args @("shell", "am", "broadcast", "-a", "com.capturecli.STOP", "-n", "com.capturecli/.CliReceiver") 2>$null | Out-Null
+  Invoke-Adb -CmdArgs @("shell", "am", "broadcast", "-a", "com.capturecli.STOP", "-n", "com.capturecli/.CliReceiver") 2>$null | Out-Null
   Uninstall-Quiet $pkg
   Write-Host "deleted $pkg — ready for next"
 }

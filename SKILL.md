@@ -129,18 +129,29 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "<SKILL>/scripts/setup_first
 流程：探测 → 启雷电 → 装 Magisk/CaptureCli → `capture.ps1 ca` → 冒烟 START。  
 Magisk 对 `com.capturecli` 选**永久允许**。
 
-## 阶段 B：分析
+## 阶段 B：分析（Agent 默认走模型点选）
+
+硬规则：**一次只装一个 App，分析完卸载再下一个。**
 
 ```powershell
 powershell -File "<SKILL>/scripts/build_apk_list.ps1" -ApkDir "<apk目录>"
-# 终端 A: capture.ps1 mitm
-powershell -File "<SKILL>/scripts/analyze_one_by_one.ps1" `
-  -ListFile "<SKILL>/out/apk_unique_list.txt" `
-  -OutDir "<SKILL>/out/run1" `
-  -StartIndex 0 -Count 22 -DumpWaitSec 10 -AfterTapSec 12
 ```
 
-硬规则：**一次只装一个 App，分析完卸载再下一个。**
+对列表里每个 APK，Agent 用 `scripts/model_ui.ps1`（不要用关键词盲点）：
+
+1. `prepare -Apk <apk> -WaitSec 10`：安装、CaptureCli START、启动 App、等 10 秒、dump XML + 截图  
+2. 读 `*.png` 与 `summarize_ui.py` 输出的可点击节点，**由模型决定**点哪里  
+3. `tap` / `swipe` / `text` / `back`，然后 `dumpshot` 再看；尽量触发登录、协议、同意、进入  
+4. `finish`：写 `domains.csv`，STOP CaptureCli，卸载该包  
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File "<SKILL>/scripts/model_ui.ps1" prepare -Apk "<apk>" -OutDir "<SKILL>/out/run_model" -WaitSec 10
+powershell -NoProfile -ExecutionPolicy Bypass -File "<SKILL>/scripts/model_ui.ps1" dumpshot -OutDir "<SKILL>/out/run_model"
+powershell -NoProfile -ExecutionPolicy Bypass -File "<SKILL>/scripts/model_ui.ps1" tap -X 540 -Y 1400 -OutDir "<SKILL>/out/run_model"
+powershell -NoProfile -ExecutionPolicy Bypass -File "<SKILL>/scripts/model_ui.ps1" finish -OutDir "<SKILL>/out/run_model"
+```
+
+无界面/装不上时才退回 `analyze_one_by_one.ps1` 的 static 兜底。
 
 ## 阶段 C：收尾
 
