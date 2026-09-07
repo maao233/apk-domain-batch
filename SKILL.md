@@ -1,15 +1,16 @@
 ---
 name: apk-domain-batch
 description: >-
-  跨设备便携的雷电/ADB + CaptureCli 批量 APK 主域名分析：skill 自带 CaptureCli.apk、
-  Magisk.apk、platform-tools(adb) 与 PS 脚本；mitmproxy 需本机按文档安装。
-  首次自动探测并配置 root，再逐个安装抓包，输出 domains.csv。
+  便携的雷电/ADB + CaptureCli 批量 APK 主域名分析。自带 CaptureCli.apk、platform-tools(adb)
+  与 PS 脚本；Magisk 管理端 APK 与 mitmproxy 需本机按 README 准备。首次探测配置后逐个安装抓包，
+  输出 domains.csv。适用于任意能执行本目录脚本的 Agent（不限 Cursor）。
   在用户提到 APK 批量域名、主域名分析、CaptureCli、apk_crack、数证杯 APK 域名时使用。
 ---
 
 # APK 批量主域名分析（便携 skill）
 
-禁止写死某台机器盘符。路径相对本 skill 目录；adb 优先用自带 `tools/platform-tools`。
+原理与人类准备见 [README.md](README.md)。禁止写死某台机器盘符；路径相对本目录；adb 优先 `tools/platform-tools`。  
+**Quick Start 由 Agent 执行**（按 README「Quick Start（给 Agent）」），不要只把命令甩给用户。
 
 ## 目录结构
 
