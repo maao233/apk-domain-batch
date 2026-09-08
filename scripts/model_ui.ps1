@@ -23,7 +23,9 @@ param(
   [int]$X2 = 0,
   [int]$Y2 = 0,
   [string]$Text = "",
-  [string]$Key = "KEYCODE_BACK"
+  [string]$Key = "KEYCODE_BACK",
+  # Refuse prepare/install when APK >= MaxMb (MB); use staticfail for oversized samples
+  [double]$MaxMb = 80
 )
 
 $ErrorActionPreference = "Continue"
@@ -248,25 +250,46 @@ switch ($Action) {
     if (-not (Test-Path $ReportCsv)) {
       "apk,package,main_domain,all_hosts,status" | Set-Content $ReportCsv -Encoding UTF8
     }
+    $apkMb = [math]::Round((Get-Item -LiteralPath $Apk).Length / 1MB, 2)
+    if ($apkMb -ge $MaxMb) {
+      Write-Host "TOO_LARGE mb=$apkMb MaxMb=$MaxMb — refuse install; run: model_ui.ps1 staticfail -Apk ..."
+      throw ("APK too large for MITM install: {0} MB >= {1} MB" -f $apkMb, $MaxMb)
+    }
     Ensure-MitmUrls
     Invoke-Adb -CmdArgs @("connect", $Serial) 2>$null | Out-Null
     $pkg = Get-PackageName $Apk
     if (-not $pkg) { throw "parse package failed" }
     $name = [IO.Path]::GetFileName($Apk)
-    Write-Host "package=$pkg name=$name"
+    Write-Host "package=$pkg name=$name mb=$apkMb"
     Invoke-Adb -CmdArgs @("connect", $Serial) 2>$null | Out-Null
 
     Copy-Item -LiteralPath $Apk $TmpApk -Force
-    if (-not $LdConsole) { throw "ldconsole.exe not found; cannot install while pm is unreliable" }
-    Write-Host "ldconsole uninstallapp $pkg (ignore errors)"
-    & $LdConsole uninstallapp --index $LdIndex --packagename $pkg 2>&1 | Out-Host
+    Write-Host "uninstall $pkg (ignore errors)"
+    if ($LdConsole) {
+      & $LdConsole uninstallapp --index $LdIndex --packagename $pkg 2>&1 | Out-Null
+    }
+    Invoke-AdbTimeout -Ms 15000 -CmdArgs @("uninstall", $pkg) | Out-Null
     Start-Sleep 2
-    Write-Host "ldconsole installapp index=$LdIndex"
-    $ldOut = & $LdConsole installapp --index $LdIndex --filename $TmpApk 2>&1 | Out-String
-    Write-Host $ldOut
-    Start-Sleep 8
-    Write-Host "installed via ldconsole (skip pm path)"
-    $inst = "Success"
+
+    $inst = ""
+    if (Wait-PackageManager) {
+      Write-Host "adb install -r -g (ASCII temp)"
+      $inst = Invoke-AdbTimeout -Ms 180000 -CmdArgs @("install", "-r", "-g", $TmpApk)
+      Write-Host $inst
+    }
+    if ($inst -notmatch "Success") {
+      if (-not $LdConsole) { throw "install failed and ldconsole.exe not found: $inst" }
+      Write-Host "adb install failed; fallback ldconsole installapp index=$LdIndex"
+      $ldOut = & $LdConsole installapp --index $LdIndex --filename $TmpApk 2>&1 | Out-String
+      Write-Host $ldOut
+      Start-Sleep 10
+      $pathCheck = Invoke-AdbTimeout -Ms 8000 -CmdArgs @("shell", "pm", "path", $pkg)
+      if ($pathCheck -notmatch "package:") {
+        throw "install failed (adb+ldconsole): pkg not on device. adb=$inst ld=$ldOut"
+      }
+      $inst = "Success"
+    }
+    Write-Host "installed OK"
 
     Set-Content $UrlsFile "" -Encoding UTF8
     Invoke-Adb -CmdArgs @("reverse", "--remove-all") 2>$null | Out-Null
@@ -419,11 +442,17 @@ switch ($Action) {
       "apk,package,main_domain,all_hosts,status" | Set-Content $ReportCsv -Encoding UTF8
     }
     $name = [IO.Path]::GetFileName($Apk)
+    $apkMb = [math]::Round((Get-Item -LiteralPath $Apk).Length / 1MB, 2)
     $pkg = ""
     try { $pkg = Get-PackageName $Apk } catch { $pkg = "" }
     $pick = Pick-Main (Get-StaticHosts $Apk)
-    $src = if ($pick.Main -and ([string]$pick.Main -notmatch 'none')) { "static_install_fail" } else { "install_fail" }
-    Write-Host "STATIC_FAIL $name MAIN=$($pick.Main)"
+    $tooLarge = $apkMb -ge $MaxMb
+    if ($tooLarge) {
+      $src = if ($pick.Main -and ([string]$pick.Main -notmatch 'none')) { "too_large_static" } else { "too_large" }
+    } else {
+      $src = if ($pick.Main -and ([string]$pick.Main -notmatch 'none')) { "static_install_fail" } else { "install_fail" }
+    }
+    Write-Host "STATIC_FAIL $name mb=$apkMb MAIN=$($pick.Main) status=$src"
     Add-Content $ReportCsv ('"{0}",{1},{2},"{3}",{4}' -f $name, $pkg, $pick.Main, $pick.All, $src)
     Write-Host "CSV=$ReportCsv"
     break

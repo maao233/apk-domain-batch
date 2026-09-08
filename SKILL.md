@@ -166,3 +166,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "<SKILL>/scripts/model_ui.ps
 - mitmproxy 未装时明确告知用户按本文安装，勿假装已自带  
 
 更多故障见 [reference.md](reference.md)。
+
+## 体积门禁（过大不装）
+
+默认 **MaxMb=80**：≥80MB 的 APK **不走安装/MITM**（易拖垮模拟器），只做静态提域（`too_large_static`）。
+
+```powershell
+powershell -File "<SKILL>/scripts/build_apk_list.ps1" -ApkDir "<apk目录>" -MaxMb 80
+# 产出: out/apk_unique_list.txt(或自定义)、apk_too_large.txt、apk_size_report.csv
+```
+
+`model_ui.ps1 prepare` 同样拒绝 ≥MaxMb；过大样本用 `staticfail`。
