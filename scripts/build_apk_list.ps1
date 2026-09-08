@@ -1,16 +1,14 @@
-# Build MD5-unique APK list; optional size gate for MITM install.
+# Build MD5-unique APK list. Size is recorded for humans; never used to skip install.
 param(
   [Parameter(Mandatory = $true)][string]$ApkDir,
   [string]$OutList = "",
-  [string]$OutSkipped = "",
-  [string]$OutReport = "",
-  # APKs at or above this size (MB) are excluded from MITM list (static-only / skip install)
-  [double]$MaxMb = 80
+  [string]$OutBySize = "",
+  [string]$OutReport = ""
 )
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "Resolve-Env.ps1")
 if (-not $OutList) { $OutList = Join-Path $SkillOut "apk_unique_list.txt" }
-if (-not $OutSkipped) { $OutSkipped = Join-Path $SkillOut "apk_too_large.txt" }
+if (-not $OutBySize) { $OutBySize = Join-Path $SkillOut "apk_ok_mitm_bysize.txt" }
 if (-not $OutReport) { $OutReport = Join-Path $SkillOut "apk_size_report.csv" }
 New-Item -ItemType Directory -Force -Path (Split-Path $OutList -Parent) | Out-Null
 
@@ -27,26 +25,23 @@ Get-ChildItem -LiteralPath $ApkDir -Filter *.apk -File | ForEach-Object {
   }
 }
 
-$ok = [System.Collections.Generic.List[string]]::new()
-$skip = [System.Collections.Generic.List[string]]::new()
-$rows = foreach ($e in $unique.Values) {
-  $tooLarge = $e.MB -ge $MaxMb
-  if ($tooLarge) { [void]$skip.Add($e.Path) } else { [void]$ok.Add($e.Path) }
+$all = @($unique.Values)
+$all | ForEach-Object { $_.Path } | Set-Content -LiteralPath $OutList -Encoding UTF8
+$all | Sort-Object MB | ForEach-Object { $_.Path } | Set-Content -LiteralPath $OutBySize -Encoding UTF8
+
+$rows = $all | ForEach-Object {
   [pscustomobject]@{
-    apk = $e.Name
-    mb = $e.MB
-    bytes = $e.Bytes
-    decision = $(if ($tooLarge) { "too_large_skip_mitm" } else { "ok_mitm" })
-    path = $e.Path
+    apk = $_.Name
+    mb = $_.MB
+    bytes = $_.Bytes
+    decision = "try_install"
+    path = $_.Path
   }
 }
-
-$ok | Set-Content -LiteralPath $OutList -Encoding UTF8
-$skip | Set-Content -LiteralPath $OutSkipped -Encoding UTF8
 $rows | Sort-Object mb -Descending | Export-Csv -LiteralPath $OutReport -NoTypeInformation -Encoding UTF8
 
-Write-Host "unique=$($unique.Count) MaxMb=$MaxMb"
-Write-Host "ok_mitm=$($ok.Count) -> $OutList"
-Write-Host "too_large=$($skip.Count) -> $OutSkipped"
+Write-Host "unique=$($unique.Count) (no size skip; install all; reboot -> install_failed)"
+Write-Host "list -> $OutList"
+Write-Host "bysize -> $OutBySize"
 Write-Host "report -> $OutReport"
 $rows | Sort-Object mb -Descending | Format-Table apk, mb, decision -AutoSize

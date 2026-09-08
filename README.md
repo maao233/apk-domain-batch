@@ -79,16 +79,15 @@ apk-domain-batch/
   assets/CaptureCli.apk
   assets/Magisk.apk     # 本地自备，gitignore
   tools/platform-tools/ # adb + NOTICE.txt
-  scripts/
-    Resolve-Env.ps1     # 探测 adb / mitmdump / 雷电等
-    setup_first_run.ps1 # 首次：装 APK、注入 CA、冒烟
-    capture.ps1         # ca | mitm | start/stop 辅助
-    build_apk_list.ps1  # APK 目录 MD5 去重
-    analyze_one_by_one.ps1
-    android_ca_hash.py
+    scripts/
+      Resolve-Env.ps1 / setup_first_run.ps1 / capture.ps1 / build_apk_list.ps1
+      model_ui.ps1          # 装包·dump·点选原语·teardown·record
+      classify_capture.py   # 抓包提示 JSON（Agent 研判用）
+      summarize_ui.py
+      analyze_one_by_one.ps1  # 遗留兜底，默认不用
+      android_ca_hash.py
   out/                  # 运行产物（默认不入库）
 ```
-
 路径一律相对本仓库根目录；**禁止写死他人机器盘符**。含非 ASCII 的 APK 路径安装前会拷到 `%TEMP%`。
 
 ---
@@ -113,68 +112,50 @@ mitmdump --version
 
 ## Quick Start（给 Agent）
 
-把本目录当作 skill / 工具包挂载后，**由 Agent 按顺序执行**（不要只把命令丢给用户）。用户只需提供：APK 目录路径、可选设备 serial。
+把本目录当作 skill / 工具包挂载后，**由 Agent 按 `SKILL.md` 单包驱动**（不要丢一整段 PS 批量点选/定域）。用户只需提供 APK 目录与可选 serial。
 
-### 0. 读规范
+### 分工
 
-打开并遵循同目录 [`SKILL.md`](SKILL.md)。输出与排错见 [`reference.md`](reference.md)。
+- **PS**：`prepare` 装包+开抓+dump；`tap` 原语；`teardown`/`uninstall` **必须卸掉目标包并打印 UNINSTALL_OK**
+- **Agent**：每个 APK **停下来读 PNG 截图** 再 `tap`（禁止 foreach+正则批量点）；`record` 写 CSV；确认卸载后再下一包
 
-### 1. 定位根目录
-
-设 `$ROOT` = 本仓库绝对路径（Agent 自行解析，勿臆造盘符）。确认存在：
-
-- `$ROOT/assets/CaptureCli.apk`  
-- `$ROOT/tools/platform-tools/adb.exe`  
-- `$ROOT/assets/Magisk.apk`（若缺失：提示用户按上文下载，勿跳过合规说明）
-
-### 2. 检查 mitmproxy
+### 最短流程
 
 ```powershell
-mitmdump --version
+# 去重列表（体积只写入 report，不跳过安装）
+powershell -File "$ROOT\scripts\build_apk_list.ps1" -ApkDir "<用户APK目录>"
+
+# 终端 A 长驻 mitm
+powershell -File "$ROOT\scripts\capture.ps1" mitm
+
+# 每个 APK（Agent 一次只做一个；必须 Read PNG 再 tap；点击 ≥ 约 1 分钟）：
+powershell -File "$ROOT\scripts\model_ui.ps1" prepare -Apk "<apk>" -OutDir "$ROOT\out\run_model" -WaitSec 10
+# 安装失败或雷电重启：recover + capture.ps1 ca + installfail，然后下一个
+# → Agent 打开 PNG= 截图看画面，再：
+powershell -File "$ROOT\scripts\model_ui.ps1" tap -X <x> -Y <y> -OutDir "$ROOT\out\run_model"
+powershell -File "$ROOT\scripts\model_ui.ps1" text -Text "13800138000" -OutDir "$ROOT\out\run_model"
+powershell -File "$ROOT\scripts\model_ui.ps1" dumpshot -OutDir "$ROOT\out\run_model"
+powershell -File "$ROOT\scripts\model_ui.ps1" teardown -OutDir "$ROOT\out\run_model"
+# 必须出现 UNINSTALL_OK；没有则 uninstall -Package <pkg>
+# → 看 classify JSON，再：
+powershell -File "$ROOT\scripts\model_ui.ps1" record -OutDir "$ROOT\out\run_model" `
+  -MainDomain "业务主域" `
+  -ValuableDomains "bucket.oss-accelerate.aliyuncs.com [aliyun-oss-accelerate]; ..." `
+  -EvidenceIds "aliyun_bucket=...; object=....dat" `
+  -Status mitm
 ```
 
-失败则按「人类：一次性准备」安装后再继续；未装时仍可分析，但主域名多半只能走 **static**。
-
-### 3. 首次环境（每台机器 / 新镜像一次）
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File "$ROOT\scripts\setup_first_run.ps1"
-```
-
-确认 `/sdcard/capturecli-status.txt` 冒烟为 `root-redirect` 且 `gost=up`。若 Magisk 弹授权，引导用户点永久允许后重试 START。
-
-### 4. 开 MITM（长驻）
-
-在**独立会话**保持运行：
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File "$ROOT\scripts\capture.ps1" mitm
-```
-
-### 5. 构建去重列表并批量分析
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File "$ROOT\scripts\build_apk_list.ps1" -ApkDir "<用户APK目录>"
-
-powershell -NoProfile -ExecutionPolicy Bypass -File "$ROOT\scripts\analyze_one_by_one.ps1" `
-  -ListFile "$ROOT\out\apk_unique_list.txt" `
-  -OutDir "$ROOT\out\run1" `
-  -StartIndex 0 -Count <N> -DumpWaitSec 10 -AfterTapSec 12
-```
-
-### 6. 交付
-
-- 主产物：`$ROOT/out/run1/domains.csv`  
-- 向用户说明：`mitm` vs `static` 比例、失败行、是否需重做 CA  
-- 确认设备上目标包已卸载，CaptureCli 可 STOP  
+CSV `status`：`mitm` / `mitm_empty` / `static` / `install_failed`。不要用体积当失败码。  
+测试账号、点击满 1 分钟、重启后恢复：[`reference.md`](reference.md)。`analyze_one_by_one.ps1` 仅遗留兜底，默认不用。
 
 ### Agent 约束
 
-- 一次只装一个样本；禁止并行多包安装「赶进度」  
-- 优先使用 `$ROOT/tools/platform-tools/adb.exe`  
-- `adb install` 经 `%TEMP%` ASCII 文件名  
-- 不提交、不上传 `assets/Magisk.apk`  
-- 本技能不限定 Cursor：任何能跑 PowerShell、读 `SKILL.md` 的 Agent 均可驱动  
+- 一次只装一个样本；**本包 UNINSTALL_OK（或 install_failed）后才能装下一个**  
+- 每个 APK **必须读截图再点**，禁止 foreach+正则批量 tap；有登录就填 reference 账号并点提交；点击 ≥ 约 1 分钟  
+- 不按体积跳过；装失败 → `install_failed` 下一包；卡死 → 自动重启后下一包（不重试该包）  
+- 优先 `$ROOT/tools/platform-tools/adb.exe`；安装经 `%TEMP%` ASCII  
+- 不提交 `assets/Magisk.apk`  
+- 不限定 Cursor  
 
 ---
 
